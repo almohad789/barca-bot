@@ -1,0 +1,64 @@
+name: Bot Barça
+
+on:
+  schedule:
+    # Toutes les 15 minutes. GitHub applique cet horaire au mieux,
+    # avec parfois 10 a 20 minutes de retard aux heures chargees.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Poster un message de test tout de suite"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bot-barca
+  cancel-in-progress: false
+
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installer les dependances
+        run: pip install -r requirements.txt
+
+      - name: Executer le bot
+        id: bot
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_GUILD_ID: ${{ secrets.DISCORD_GUILD_ID }}
+          ROLE_ID: ${{ vars.ROLE_ID }}
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+          TEAM_ID: "81"
+          EVENEMENTS_JOURS: "365"
+        run: |
+          if [ "${{ inputs.test }}" = "true" ]; then
+            python runner.py --test
+          else
+            python runner.py
+          fi
+
+      - name: Sauvegarder ce qui a ete poste
+        if: steps.bot.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git commit -m "Mise a jour des messages postes"
+          git push
