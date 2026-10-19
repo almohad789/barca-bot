@@ -8,7 +8,7 @@ Différence avec le bot des Rams : en Liga, l'heure exacte n'est fixée que deux
 à quatre semaines avant le match, et elle change parfois. Le bot :
   * ne crée un événement que lorsque l'heure est confirmée ;
   * retient l'identifiant Discord et l'heure dans state.json ;
-  * corrige l'événement si l'heure bouge, et le supprime si le match est reporté.
+  * corrige l'événement si l'heure ou le titre bouge, et le supprime si le match est reporté.
 """
 
 from __future__ import annotations
@@ -35,8 +35,7 @@ ENTITY_EXTERNAL = 3
 
 def _nom(match, team_id: str, nom_equipe: str) -> str:
     eux = match.eux(team_id)
-    sens = "vs" if match.est_domicile(team_id) else "à"
-    return f"⚽ {nom_equipe} {sens} {eux.nom}"[:100]
+    return f"⚽ {nom_equipe} vs {eux.nom}"[:100]
 
 
 def _lieu(match, team_id: str, stade_domicile: str) -> str:
@@ -145,7 +144,8 @@ async def synchroniser(
             continue
 
         debut = match.coup_envoi.isoformat()
-        if connu and connu.get("debut") == debut:
+        nom = _nom(match, team_id, nom_equipe)
+        if connu and connu.get("debut") == debut and connu.get("nom") == nom:
             continue
 
         h2h = None
@@ -158,12 +158,20 @@ async def synchroniser(
         charge = _charge(match, team_id, nom_equipe, stade_domicile, h2h)
 
         if connu:
-            # L'heure a changé : on corrige seulement les horaires.
-            correctif = {k: charge[k] for k in ("scheduled_start_time", "scheduled_end_time")}
+            # L'heure ou le titre a changé : on corrige seulement ce qui diffère.
+            correctif = {}
+            if connu.get("debut") != debut:
+                correctif.update({k: charge[k] for k in ("scheduled_start_time", "scheduled_end_time")})
+            if connu.get("nom") != nom:
+                correctif["name"] = nom
             statut, _ = await _appel(session, "PATCH", f"{base}/{connu['id']}", token, correctif)
             if statut == 200:
+                if "name" in correctif:
+                    log.info("titre corrigé pour %s : %s", match.id, nom)
+                if "scheduled_start_time" in correctif:
+                    log.info("horaire corrigé pour %s : %s", match.id, horaire(match))
                 connu["debut"] = debut
-                log.info("horaire corrigé pour %s : %s", match.id, horaire(match))
+                connu["nom"] = nom
             elif statut == 404:
                 evenements.pop(match.id)          # supprimé à la main, on le recréera
             else:
@@ -172,7 +180,7 @@ async def synchroniser(
             statut, corps = await _appel(session, "POST", base, token, charge)
             if statut not in (200, 201):
                 break                              # inutile d'insister si ça échoue
-            evenements[match.id] = {"id": json.loads(corps).get("id"), "debut": debut}
+            evenements[match.id] = {"id": json.loads(corps).get("id"), "debut": debut, "nom": nom}
             log.info("événement créé pour %s", match.id)
 
         modifie = True
